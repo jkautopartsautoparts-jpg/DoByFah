@@ -1668,7 +1668,17 @@ function uploadDone(driveData,info,dur,end,prod){
 function finishUpload(r, isReturnMode, prod, fid, logData){
   setUpload(true,100,'✅ สำเร็จ!');
   setTimeout(function(){setUpload(false);showSuccess(logData);
-    if(S.orderNumber) S.usedOrders[S.orderNumber]={packer:S.user?S.user.displayName:'',date:new Date().toISOString().split('T')[0]};
+    if(S.orderNumber){
+      S.usedOrders[S.orderNumber]={
+        packer:S.user?S.user.displayName:'',
+        date:logData.date||new Date().toISOString().split('T')[0],
+        time:logData.startTime||'',
+        fileId:fid||'',
+        duration:Number(logData.durationSec)||0,
+        note:prod||'',
+        barcode:S.orderNumber
+      };
+    }
     if(isReturnMode && r && r.matchedReturn){
       toast('🔗 จับคู่กับเคสคืน '+r.matchedReturn.returnTrackingNo+' แล้ว');
     } else if(isReturnMode){
