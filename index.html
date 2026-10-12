@@ -71,7 +71,7 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
 <button onclick="showScreen('shipping')" class="text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">🚚 ติดตามส่ง</button>
 <button onclick="showScreen('bill')" class="text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">📋 ใบส่งสินค้า</button>
 <button onclick="showScreen('claims')" class="text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">🛠️ เคลม</button>
-<button onclick="showScreen('tax')" class="text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">📄 ใบกำกับ</button>
+<button onclick="showScreen('tax')" class="hidden text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">📄 ใบกำกับ</button>
 <button onclick="toggleNotifPanel()" class="relative text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">
 🔔<span id="notif-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">0</span>
 </button>
@@ -387,8 +387,8 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
 
 <!-- Tab buttons -->
 <div class="max-w-2xl mx-auto px-4 pt-4">
-<div class="grid grid-cols-3 gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1">
-<button id="tab-btn-tax" onclick="switchTab('tax')" class="py-2.5 rounded-lg text-xs font-semibold transition">📄 ใบกำกับภาษี</button>
+<div class="grid grid-cols-2 gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1">
+<button id="tab-btn-tax" onclick="switchTab('tax')" class="hidden py-2.5 rounded-lg text-xs font-semibold transition">📄 ใบกำกับภาษี</button>
 <button id="tab-btn-claim" onclick="switchTab('claim')" class="py-2.5 rounded-lg text-xs font-semibold transition">🛠️ แจ้งเคลม</button>
 <button id="tab-btn-track" onclick="switchTab('track')" class="py-2.5 rounded-lg text-xs font-semibold transition">📦 เช็คสถานะ</button>
 </div>
@@ -621,7 +621,7 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
 <div class="flex items-center gap-1">
 <button onclick="showScreen('dashboard')" class="text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">📊 รายงาน</button>
 
-<button onclick="showScreen('tax')" class="text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">📄 ใบกำกับ</button>
+<button onclick="showScreen('tax')" class="hidden text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">📄 ใบกำกับ</button>
 <button onclick="toggleNotifPanel()" class="relative text-slate-400 hover:text-white hover:bg-slate-800 px-3 py-1.5 rounded-lg text-xs">
 🔔<span id="notif-badge-c" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">0</span>
 </button>
@@ -914,7 +914,7 @@ tbody tr:hover{background:rgba(255,255,255,.03)}
 // CONFIG — ใส่ GAS Web App URL ตรงนี้
 // วิธีหา: Apps Script → Deploy → Manage deployments → คัดลอก "Web app URL"
 // ═══════════════════════════════════════
-var GAS_URL = 'https://script.google.com/macros/s/AKfycbz1usVFRv9cs-4cAPUTpd-EyZgy8DFEHb0WtaYf1vdcA1XrWXs2SKd-8ZLF0Q2S4NZU3Q/exec';
+var GAS_URL = 'https://script.google.com/macros/s/AKfycbwnG9PU5h8_Z6tTkIBswdm10evy6i03mgCgZ9YVijrQ_U3_t1-FTwEOKCZKCFEk9gqZqg/exec';
 
 // เช็คว่าใส่ URL แล้วหรือยัง
 if (GAS_URL === 'PASTE_YOUR_GAS_WEB_APP_URL_HERE') {
@@ -926,7 +926,62 @@ if (GAS_URL === 'PASTE_YOUR_GAS_WEB_APP_URL_HERE') {
 // ═══════════════════════════════════════
 // API — เรียก GAS ผ่าน fetch GET (ไม่มี CORS issue)
 // ═══════════════════════════════════════
-function gRun(action, params) {
+// Apps Script สะดุดเป็นปกติ (throttle, cold start, Drive API ช้า)
+// ไม่มี retry = บันทึกล้มทันที → อาการ "บันทึกไม่ได้ เป็นๆ หายๆ"
+var NET = {
+  TIMEOUT_MS: 45000,
+  MAX_ATTEMPTS: 3,
+  BACKOFF_MS: 1200
+};
+
+function _sleep(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+
+function _fetchTimeout(url, opts){
+  opts = opts || {};
+  if(typeof AbortController === 'undefined') return fetch(url, opts);
+  var ctrl = new AbortController();
+  var timer = setTimeout(function(){ ctrl.abort(); }, NET.TIMEOUT_MS);
+  opts.signal = ctrl.signal;
+  return fetch(url, opts).then(function(r){
+    clearTimeout(timer); return r;
+  }, function(err){
+    clearTimeout(timer);
+    if(err && err.name === 'AbortError') throw new Error('หมดเวลารอเซิร์ฟเวอร์ (timeout)');
+    throw err;
+  });
+}
+
+function _gFetch(url, opts, label, maxAttempts){
+  var attempts = maxAttempts || NET.MAX_ATTEMPTS;
+  function attempt(n){
+    return _fetchTimeout(url, opts)
+      .then(function(r){
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function(t){
+        try { return JSON.parse(t); }
+        catch(e){ throw new Error('เซิร์ฟเวอร์ตอบไม่ถูกต้อง (อาจติด limit ชั่วคราว)'); }
+      })
+      .catch(function(err){
+        if(n >= attempts){
+          console.error('[gRun] ' + label + ' ล้มเหลวหลังลอง ' + attempts + ' ครั้ง:', err);
+          // "Failed to fetch" = ส่วนใหญ่คือ deployment ตั้ง Who has access ไม่ใช่ Anyone
+          var m = err.message || 'เชื่อมต่อไม่ได้';
+          if(/Failed to fetch|NetworkError|ERR_FAILED/i.test(m)){
+            m = 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ — ตรวจการตั้งค่า Deploy ให้ "Who has access: Anyone"';
+          }
+          throw new Error(m + ' (ลองแล้ว ' + attempts + ' ครั้ง)');
+        }
+        var wait = NET.BACKOFF_MS * n;
+        console.warn('[gRun] ' + label + ' ครั้งที่ ' + n + ' ล้มเหลว (' + err.message + ') — ลองใหม่ใน ' + wait + 'ms');
+        return _sleep(wait).then(function(){ return attempt(n + 1); });
+      });
+  }
+  return attempt(1);
+}
+
+function gRun(action, params, maxAttempts) {
   var url = GAS_URL + '?action=' + encodeURIComponent(action);
   if (params) {
     Object.keys(params).forEach(function(k) {
@@ -936,29 +991,20 @@ function gRun(action, params) {
   }
   // ถ้า URL ยาวเกิน 6000 ตัว → switch ไปใช้ POST (กัน "Failed to fetch")
   if(url.length > 6000){
-    return gRunPost(action, params);
+    return gRunPost(action, params, maxAttempts);
   }
-  return fetch(url)
-    .then(function(r) { return r.text(); })
-    .then(function(t) {
-      try { return JSON.parse(t); }
-      catch(e) { throw new Error('Invalid response from server'); }
-    });
+  return _gFetch(url, {}, action, maxAttempts);
 }
 
-// POST ใช้สำหรับ payload ขนาดใหญ่ (เช่น Excel rows) — ใช้ text/plain เพื่อไม่ trigger CORS preflight
-function gRunPost(action, params) {
+// POST — ใช้กับ payload ใหญ่ (Excel rows) และ login (กันรหัสผ่านโผล่ใน URL)
+// text/plain เพื่อไม่ trigger CORS preflight
+function gRunPost(action, params, maxAttempts) {
   var body = Object.assign({action: action}, params || {});
-  return fetch(GAS_URL, {
+  return _gFetch(GAS_URL, {
     method: 'POST',
     headers: {'Content-Type': 'text/plain;charset=utf-8'},
     body: JSON.stringify(body)
-  })
-  .then(function(r) { return r.text(); })
-  .then(function(t) {
-    try { return JSON.parse(t); }
-    catch(e) { throw new Error('Invalid response from server'); }
-  });
+  }, action, maxAttempts);
 }
 
 // ═══════════════════════════════════════
@@ -1021,7 +1067,8 @@ function doLogin() {
   if(!u||!p){showErr('login-err','กรุณากรอกข้อมูลให้ครบ');return;}
   el('login-err').classList.add('hidden');
   showOverlay('กำลังตรวจสอบ...');
-  gRun('login',{username:u,password:p}).then(function(r){
+  // ใช้ POST เสมอ — กันรหัสผ่านโผล่ใน URL / Executions log / ประวัติเบราว์เซอร์
+  gRunPost('login',{username:u,password:p}).then(function(r){
     hideOverlay();
     if(!r||!r.success){showErr('login-err',(r&&r.message)||'Login ไม่สำเร็จ');return;}
     // จำ login ไว้ใน sessionStorage (refresh ไม่ต้อง login ใหม่)
@@ -1077,7 +1124,8 @@ function goPage(page) {
 }
 function initPage() {
   var page = getQueryParam('page');
-  if (page === 'claim' || page === 'track' || page === 'customer' || page === 'tax') {
+  if (page === 'tax') page = 'claim';   // ปิดใช้ระบบใบกำกับภาษี
+  if (page === 'claim' || page === 'track' || page === 'customer') {
     showScreen('customer');
     loadCarriersIntoSelect('cf-carrier');
     // เริ่มที่ tab ที่ match กับ URL
@@ -1091,6 +1139,29 @@ function initPage() {
   autoRestore();
 }
 initPage();
+
+// ปริ้นใบส่ง — รอ DOM/layout นิ่งก่อน กันอาการต้องกด 2-3 รอบ
+var _printing = false;
+function doPrintBill(){
+  if(_printing) return;
+  _printing = true;
+  var modal = document.getElementById('bill-modal');
+  if(modal && modal.classList.contains('hidden')) modal.classList.remove('hidden');
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      setTimeout(function(){
+        try { window.print(); }
+        finally { setTimeout(function(){ _printing = false; }, 500); }
+      }, 150);
+    });
+  });
+}
+
+// ตรวจรายการที่บันทึกค้างจากรอบก่อน (เน็ตหลุด/ปิดเบราว์เซอร์) แล้วลองใหม่
+try {
+  updatePendingBadge();
+  if(_readQueue().length) setTimeout(function(){ flushFailedSaves(); }, 3000);
+} catch(e){}
 
 // ═══════════════════════════════════════
 // TAB SWITCHER (สำหรับหน้า customer)
@@ -1590,13 +1661,26 @@ function doUpload(blob,filename,durationSec,endTime,products) {
 
 function simpleUp(blob,fn,info,dur,end,prod){
   setUpload(true,30,'อัปโหลด...');
-  var fd=new FormData();
-  fd.append('metadata',new Blob([JSON.stringify({name:fn,parents:[info.folderId]})],{type:'application/json'}));
-  fd.append('file',blob);
-  return fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',{
-    method:'POST',headers:{'Authorization':'Bearer '+info.token},body:fd
-  }).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-  .then(function(d){return uploadDone(d,info,dur,end,prod);});
+  // retry 3 ครั้ง — Drive API มี 5xx/429 ชั่วคราวได้
+  function tryUpload(n){
+    var fd=new FormData();
+    fd.append('metadata',new Blob([JSON.stringify({name:fn,parents:[info.folderId]})],{type:'application/json'}));
+    fd.append('file',blob);
+    return fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',{
+      method:'POST',headers:{'Authorization':'Bearer '+info.token},body:fd
+    }).then(function(r){
+      if(!r.ok){
+        var retryable = (r.status >= 500 || r.status === 429);
+        if(retryable && n < 3){
+          setUpload(true,30,'อัปโหลดสะดุด — ลองใหม่ครั้งที่ '+(n+1)+'...');
+          return _sleep(1500*n).then(function(){ return tryUpload(n+1); });
+        }
+        throw new Error('อัปโหลดไม่สำเร็จ (HTTP '+r.status+')');
+      }
+      return r.json();
+    });
+  }
+  return tryUpload(1).then(function(d){return uploadDone(d,info,dur,end,prod);});
 }
 
 function resumableUp(blob,fn,info,dur,end,prod){
@@ -1637,7 +1721,8 @@ function uploadDone(driveData,info,dur,end,prod){
     logData.returnOrderNumber=S.orderNumber||'';   // ในโหมด return ใช้ S.orderNumber เป็น order
     logData.returnReason=S.returnReason||'';
   }
-  return gRun('savePackingLog',logData).then(function(r){
+  // วิดีโออัปขึ้น Drive แล้ว → ห้ามพลาดตอนบันทึก log ให้ retry ถึง 5 ครั้ง
+  return gRun('savePackingLog',logData,5).then(function(r){
     // ── Backend ตอบกลับว่า duplicate → ถามผู้ใช้ก่อน ──
     if(r && r.duplicate){
       setUpload(false);
@@ -1651,7 +1736,7 @@ function uploadDone(driveData,info,dur,end,prod){
         // บันทึกซ้ำ — ส่ง allowDuplicate=true
         logData.allowDuplicate = true;
         setUpload(true,90,'บันทึกข้อมูล (ซ้ำ)...');
-        return gRun('savePackingLog', logData).then(function(r2){ return finishUpload(r2, isReturnMode, prod, fid, logData); });
+        return gRun('savePackingLog', logData, 5).then(function(r2){ return finishUpload(r2, isReturnMode, prod, fid, logData); });
       } else {
         // ยกเลิก
         S.uploading=false; S.orderNumber=null; S.trackingNumber=null; S.rawBarcode=null;
@@ -1661,24 +1746,93 @@ function uploadDone(driveData,info,dur,end,prod){
         return;
       }
     }
+    if(r && r.success === false){ throw new Error(r.message || 'บันทึกไม่สำเร็จ'); }
     return finishUpload(r, isReturnMode, prod, fid, logData);
+  }).catch(function(err){
+    // ── SAFETY NET: วิดีโออยู่บน Drive แล้ว แต่บันทึก log ไม่ได้ ──
+    queueFailedSave(logData);
+    S.uploading=false; setUpload(false);
+    alert('⚠️ วิดีโออัปโหลดสำเร็จแล้ว แต่บันทึกข้อมูลลงระบบไม่ได้\n\n'
+      + 'เลขพัสดุ: ' + (logData.trackingNumber||'-') + '\n'
+      + 'สาเหตุ: ' + (err.message||'ไม่ทราบ') + '\n\n'
+      + '✅ ระบบเก็บรายการนี้ไว้ในเครื่องแล้ว จะลองบันทึกใหม่อัตโนมัติ\n'
+      + '(ห้ามปิดเบราว์เซอร์จนกว่าจะขึ้นว่าสำเร็จ)');
+    S.orderNumber=null;S.trackingNumber=null;S.rawBarcode=null;
+    S.returnReason=null;S.returnExtra=null;
+    el('bc-order').textContent='-';el('bc-tracking').textContent='-';
+    focusScan();
+    setTimeout(flushFailedSaves, 5000);
   });
 }
+
+// ═══════════════════════════════════════
+// RECOVERY QUEUE — กันข้อมูลหายเมื่อบันทึกล้มเหลว
+// ═══════════════════════════════════════
+var PENDING_KEY = 'packapp_pending_saves_v1';
+
+function _readQueue(){
+  try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); }
+  catch(e){ return []; }
+}
+function _writeQueue(arr){
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(arr)); } catch(e){}
+  updatePendingBadge();
+}
+function queueFailedSave(logData){
+  var q = _readQueue();
+  if(logData.fileId && q.some(function(x){ return x.fileId === logData.fileId; })) return;
+  q.push(logData);
+  _writeQueue(q);
+}
+function flushFailedSaves(silent){
+  var q = _readQueue();
+  if(!q.length) return Promise.resolve(0);
+  if(!silent) toast('🔄 กำลังลองบันทึกรายการค้าง ' + q.length + ' รายการ...');
+  var remaining = [], okCount = 0, chain = Promise.resolve();
+  q.forEach(function(item){
+    chain = chain.then(function(){
+      var payload = Object.assign({}, item, {allowDuplicate:true});
+      return gRun('savePackingLog', payload, 2).then(function(r){
+        if(r && (r.success || r.duplicate)) okCount++; else remaining.push(item);
+      }).catch(function(){ remaining.push(item); });
+    });
+  });
+  return chain.then(function(){
+    _writeQueue(remaining);
+    if(okCount > 0) toast('✅ บันทึกรายการค้างสำเร็จ ' + okCount + ' รายการ');
+    if(remaining.length > 0 && !silent) toast('⚠️ ยังค้างอีก ' + remaining.length + ' รายการ', 5000);
+    return okCount;
+  });
+}
+function updatePendingBadge(){
+  var q = _readQueue();
+  var badge = document.getElementById('pending-save-badge');
+  if(!badge){
+    if(!q.length) return;
+    badge = document.createElement('div');
+    badge.id = 'pending-save-badge';
+    badge.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:9999;background:#b45309;color:#fff;'
+      + 'padding:10px 14px;border-radius:12px;font-size:12px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.4)';
+    badge.onclick = function(){ flushFailedSaves(); };
+    document.body.appendChild(badge);
+  }
+  if(!q.length){ badge.remove(); return; }
+  badge.textContent = '⚠️ มี ' + q.length + ' รายการรอบันทึก (กดเพื่อลองใหม่)';
+}
+window.addEventListener('beforeunload', function(e){
+  if(_readQueue().length > 0){
+    e.preventDefault();
+    e.returnValue = 'ยังมีรายการที่บันทึกไม่สำเร็จ ถ้าปิดตอนนี้ข้อมูลจะหาย';
+    return e.returnValue;
+  }
+});
+setInterval(function(){ if(_readQueue().length) flushFailedSaves(true); }, 60000);
+window.addEventListener('online', function(){ if(_readQueue().length) flushFailedSaves(); });
 
 function finishUpload(r, isReturnMode, prod, fid, logData){
   setUpload(true,100,'✅ สำเร็จ!');
   setTimeout(function(){setUpload(false);showSuccess(logData);
-    if(S.orderNumber){
-      S.usedOrders[S.orderNumber]={
-        packer:S.user?S.user.displayName:'',
-        date:logData.date||new Date().toISOString().split('T')[0],
-        time:logData.startTime||'',
-        fileId:fid||'',
-        duration:Number(logData.durationSec)||0,
-        note:prod||'',
-        barcode:S.orderNumber
-      };
-    }
+    if(S.orderNumber) S.usedOrders[S.orderNumber]={packer:S.user?S.user.displayName:'',date:new Date().toISOString().split('T')[0]};
     if(isReturnMode && r && r.matchedReturn){
       toast('🔗 จับคู่กับเคสคืน '+r.matchedReturn.returnTrackingNo+' แล้ว');
     } else if(isReturnMode){
@@ -3837,27 +3991,6 @@ function closeBillModal(){
   BILL_CURRENT = null;
   BILL_PREVIEW_DATA = null;
   BILL_EDIT_MODE = false;
-}
-
-// ปริ้น — รอ DOM/layout นิ่งก่อน กันปัญหาต้องกด 2-3 รอบ
-var _printing = false;
-function doPrintBill(){
-  if(_printing) return;
-  _printing = true;
-  var modal = el('bill-modal');
-  // ให้แน่ใจว่า modal แสดงอยู่จริง
-  if(modal && modal.classList.contains('hidden')){
-    modal.classList.remove('hidden');
-  }
-  // รอ browser render เสร็จ 2 เฟรม + delay สั้นๆ ให้ layout นิ่ง
-  requestAnimationFrame(function(){
-    requestAnimationFrame(function(){
-      setTimeout(function(){
-        try { window.print(); }
-        finally { setTimeout(function(){ _printing = false; }, 500); }
-      }, 150);
-    });
-  });
 }
 
 // ── ยืนยันสร้างใบส่ง (จาก preview) ──
